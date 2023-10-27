@@ -1,46 +1,76 @@
-# sheet_id_sample = '4.1. Generik - Sample'
-# sheet_name_sample = 'Data Sampel'
-# sheet_name_layanan = 'Data Layanan'
-
 import gspread
 import pandas as pd
+from datetime import datetime
 
-# Fungsi untuk mengecek apakah nilai "True" atau bukan
-def is_true(val):
-    return val.lower() == 'true'
+# Authenticate and open "spreadsheet generik sample"
+sample_sheet_id = '4.1. Generik - Sample'
+finance_sheet_id = '4.2. Generik - Finance'
+sample_worksheet_name = 'Data Sampel'
+layanan_worksheet_name = 'Data Layanan'
+finance_worksheet_name = 'Variasi Special Pricing_Paket'
 
-# Nama spreadsheet dan lembar Google
-sheet_id = '4.1. Generik - Sample'
-sheet_name_sample = 'Data Sampel'
-sheet_name_service = 'Data Layanan'
+try:
+    # Authenticate and access "spreadsheet generik sample"
+    sheet_service = gspread.service_account(filename='key.json')
+    sample_worksheet = sheet_service.open(sample_sheet_id)
+    sheet_ds = sample_worksheet.worksheet(sample_worksheet_name)
 
-# Mendapatkan autentikasi ke Google Sheets
-sheet_service = gspread.service_account(filename='key.json')
-df_sample = sheet_service.open(sheet_id).worksheet(sheet_name_sample)
-df_service = sheet_service.open(sheet_id).worksheet(sheet_name_service)
+    # Access data from "spreadsheet generik sample"
+    sample_data = pd.DataFrame(sheet_ds.get_all_records())
 
-# Mendapatkan data dari lembar Google
-data_sample = df_sample.get_all_records()
-data_service = df_service.get_all_records()
+    # Convert 'Tanggal Pickup' to datetime
+    sample_data['Tanggal Pickup'] = pd.to_datetime(sample_data['Tanggal Pickup'], format='%d/%m/%Y')
 
-# Membuat DataFrames
-df_sample = pd.DataFrame(data_sample)
-df_service = pd.DataFrame(data_service)
+    # Filter for 'Special Price' being TRUE
+    special_price_true = sample_data[sample_data['Special Price'] == 'TRUE']
 
-# Menggabungkan DataFrames berdasarkan kolom "id_sample"
-merged_df = df_sample.merge(df_service, on='ID Sample', how='inner')
+    # Authenticate and access "spreadsheet generik sample" (DATA LAYANAN)
+    layanan_worksheet = sample_worksheet.worksheet(layanan_worksheet_name)
+    layanan_data = pd.DataFrame(layanan_worksheet.get_all_records())
 
+    # Get 'ID Sample' with 'layanan'
+    id_samples_with_layanan = layanan_data[layanan_data['Layanan'].notna()]['ID Sample']
 
-# Filter data berdasarkan tanggal pickup untuk bulan Juli hingga Oktober
-merged_df['Tanggal Pickup'] = pd.to_datetime(merged_df['Tanggal Pickup'], format='%d/%m/%Y')
-df_layanan_data = merged_df[(merged_df['Tanggal Pickup'].dt.month >= 7) & (merged_df['Tanggal Pickup'].dt.month <= 10)]
+    # Authenticate and access "spreadsheet generik finance"
+    finance_worksheet = sheet_service.open(finance_sheet_id)
+    sheet_variasi= finance_worksheet.worksheet(finance_worksheet_name)
+    finance_data = pd.DataFrame(sheet_variasi.get_all_records())
 
-# Menerapkan filter untuk harga khusus (special price) yang benar (True)
-filtered_df = df_layanan_data[df_layanan_data['Special Price'].apply(is_true)]
+    # Check for matching 'rs/klinik' in "variasi special pricing paket"
+    sample_rs_klinik = special_price_true['RS/Klinik'].unique()
+    matching_rs_klinik = finance_data[finance_data['Nama Instansi'].isin(sample_rs_klinik)]
 
-# Membuat ringkasan berdasarkan RS/Klinik
-summary_df = filtered_df.groupby(['RS/Klinik','ID Sample', 'Layanan']).size().reset_index(name='count')
+    # Check for 'tanggal pickup' in between 'tanggal mulai' and 'tanggal selesai'
+    summary = []
+    for index, row in special_price_true.iterrows():
+        pickup_date = row['Tanggal Pickup']
+        matching_rs = matching_rs_klinik[matching_rs_klinik['Nama Instansi'] == row['RS/Klinik']]
+        for _, match_row in matching_rs.iterrows():
+            start_date = pd.to_datetime(match_row['Tanggal Mulai'], format='%d/%m/%Y')
+            end_date = pd.to_datetime(match_row['Tanggal Selesai'], format='%d/%m/%Y')
+            if not pd.isnull(start_date) and not pd.isnull(end_date) and start_date <= pickup_date <= end_date:
+                summary.append({
+                    'ID Sample': row['ID Sample'],
+                    'Tanggal Pickup': pickup_date,
+                    'RS/Klinik': row['RS/Klinik'],
+                    'Tanggal Mulai': match_row['Tanggal Mulai'],
+                    'Nama Instansi': match_row['Nama Instansi'],
+                    'Tabel Harga Special': match_row['Tabel Harga Special']
+                })
 
-# Export ke dalam format Excel
-summary_df.to_excel('summary_paket.xlsx', index=False)
+    # Create a DataFrame from the summary data
+    summary_df = pd.DataFrame(summary)
 
+    # Filter for specific months (July, August, September, October)
+    selected_months = [7, 8, 9, 10]
+    summary_df = summary_df[summary_df['Tanggal Pickup'].dt.month.isin(selected_months)]
+
+    # Group and aggregate data for the summary
+    summary_grouped = summary_df.groupby(['ID Sample', 'RS/Klinik','Tanggal Mulai','Nama Instansi', 'Tabel Harga Special']).size().reset_index(name='Jumlah Paket')
+
+    # Export to Excel
+    summary_grouped.to_excel('summary_special_paket.xlsx', index=False)
+
+    print("Summary data successfully exported to summary_special_paket.xlsx")
+except Exception as e:
+    print(f"An error occurred: {e}")
