@@ -34,8 +34,11 @@ class SampleSummary:
             end_date = datetime(2023, 10, 31)
             filtered_data = df_dp[(df_dp['Tanggal Pickup'] >= start_date) & (df_dp['Tanggal Pickup'] <= end_date)]
 
+            # Mengurutkan data berdasarkan RS/Klinik dan Tanggal Pickup
+            sorted_data = filtered_data.sort_values(by=['Tanggal Pickup', 'RS/Klinik'])
+
             # Membuat ringkasan berdasarkan RS/Klinik
-            summary = filtered_data.groupby(['RS/Klinik', 'Bulan']).size().reset_index(name='Summary Pembelian')
+            summary = sorted_data.groupby(['Bulan', 'RS/Klinik'])['ID Sample'].count().reset_index(name='Summary Pembelian')
             return summary
         except Exception as e:
             print(f"Error while generating summary: {str(e)}")
